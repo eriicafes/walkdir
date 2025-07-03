@@ -19,7 +19,7 @@ func NewTrieNode() *TrieNode {
 	}
 }
 
-func WalkFilesWithLayoutOptimized(fsys fs.FS, ext string, layoutFilename string, dirFilter string) map[string][]string {
+func WalkFilesWithLayoutTrie(fsys fs.FS, ext string, layoutFilename string, dirFilter string) map[string][]string {
 	root := NewTrieNode()
 	groups := make(map[string][]string)
 

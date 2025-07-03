@@ -1,305 +1,137 @@
 package main
 
 import (
-	"os"
+	"maps"
 	"slices"
-	"strconv"
 	"testing"
 
 	"io/fs"
 	"testing/fstest"
 )
 
-func BenchmarkWalkSmall(b *testing.B) {
-	fsys := os.DirFS("example")
-	visited := 0
+// func BenchmarkWalk(b *testing.B) {
+// 	smFsys := generateFS("data", 3, 2)
+// 	lgFsys := generateFS("data", 100, 5)
 
-	for b.Loop() {
-		err := fs.WalkDir(fsys, "data_sm", func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+// 	cases := []struct {
+// 		name     string
+// 		fsys     fs.FS
+// 		walkFunc func(fsys fs.FS, root string, fn fs.WalkDirFunc) error
+// 	}{
+// 		{"FS Small", smFsys, fs.WalkDir},
+// 		{"BreadthFirst Small", smFsys, walkDirBreadthFirst},
+// 		{"FS Large", lgFsys, fs.WalkDir},
+// 		{"BreadthFirst Large", lgFsys, walkDirBreadthFirst},
+// 	}
+
+// 	for _, c := range cases {
+// 		b.Run(c.name, func(b *testing.B) {
+// 			b.ReportAllocs()
+// 			for b.Loop() {
+// 				visited := 0
+// 				c.walkFunc(c.fsys, "data", func(path string, d fs.DirEntry, err error) error {
+// 					if err != nil {
+// 						return err
+// 					}
+// 					visited++
+// 					return nil
+// 				})
+// 			}
+// 		})
+// 	}
+// }
+
+func BenchmarkWalkLayout(b *testing.B) {
+	smFsys := generateFS("data", 3, 2)
+	mdFsys := generateFS("data", 30, 4)
+	lgFsys := generateFS("data", 100, 5)
+
+	cases := []struct {
+		name     string
+		fsys     fs.FS
+		walkFunc func(fsys fs.FS, ext string, layoutFilename string, dir string) map[string][]string
+	}{
+		{"Initial Small", smFsys, WalkFilesWithLayout},
+		{"BreadthFirst Small", smFsys, WalkFilesWithLayoutBreadthFirst},
+		{"Trie Small", smFsys, WalkFilesWithLayoutTrie},
+		{"Initial Medium", mdFsys, WalkFilesWithLayout},
+		{"BreadthFirst Medium", mdFsys, WalkFilesWithLayoutBreadthFirst},
+		{"Trie Medium", mdFsys, WalkFilesWithLayoutTrie},
+		{"Initial Large", lgFsys, WalkFilesWithLayout},
+		{"BreadthFirst Large", lgFsys, WalkFilesWithLayoutBreadthFirst},
+		{"Trie Large", lgFsys, WalkFilesWithLayoutTrie},
+	}
+
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				c.walkFunc(c.fsys, "html", "layout", "data")
 			}
-			visited++
-			return nil
 		})
-		if err != nil {
-			b.Fatalf("unexpected error: %v", err)
-		}
-	}
-	if visited == 0 {
-		b.Fatal("no files visited")
 	}
 }
 
-func BenchmarkWalkBreadthFirstSmall(b *testing.B) {
-	fsys := os.DirFS("example")
-	visited := 0
+func TestWalkFilesWithLayout(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html":              {},
+		"index.tmpl":              {},
+		"index":                   {},
+		"layout.html":             {},
+		"test/layout.html":        {},
+		"test/index.tmpl":         {},
+		"test/index":              {},
+		"app/layout.html":         {},
+		"app/index.html":          {},
+		"app/dashboard.html":      {},
+		"app/dashboard.tmpl":      {},
+		"app/dashboard":           {},
+		"app/account/layout.html": {},
+		"app/account/index.html":  {},
+		"auth/index.tmpl":         {},
+		"auth/index":              {},
+		"auth/login.html":         {},
+		"auth/register.html":      {},
+	}
 
-	for b.Loop() {
-		err := walkDirBreadthFirst(fsys, "data_sm", func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+	// root
+	expectedRoot := map[string][]string{
+		"index":             {"layout", "index"},
+		"app/index":         {"layout", "app/layout", "app/index"},
+		"app/dashboard":     {"layout", "app/layout", "app/dashboard"},
+		"app/account/index": {"layout", "app/layout", "app/account/layout", "app/account/index"},
+		"auth/login":        {"layout", "auth/login"},
+		"auth/register":     {"layout", "auth/register"},
+	}
+	// app sub dir
+	expectedSub := map[string][]string{
+		"app/index":         {"layout", "app/layout", "app/index"},
+		"app/dashboard":     {"layout", "app/layout", "app/dashboard"},
+		"app/account/index": {"layout", "app/layout", "app/account/layout", "app/account/index"},
+	}
+
+	cases := []struct {
+		name     string
+		walkFunc func(fsys fs.FS, ext string, layoutFilename string, dir string) map[string][]string
+	}{
+		{"Initial", WalkFilesWithLayout},
+		{"BreadthFirst", WalkFilesWithLayoutBreadthFirst},
+		{"rie", WalkFilesWithLayoutTrie},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// walk root
+			got := c.walkFunc(fsys, "html", "layout", ".")
+			if !maps.EqualFunc(expectedRoot, got, slices.Equal) {
+				t.Errorf("root expected: %v, got: %v", expectedRoot, got)
 			}
-			visited++
-			return nil
-		})
-		if err != nil {
-			b.Fatalf("unexpected error: %v", err)
-		}
-	}
-	if visited == 0 {
-		b.Fatal("no files visited")
-	}
-}
 
-func BenchmarkWalkLarge(b *testing.B) {
-	fsys := os.DirFS("example")
-	visited := 0
-
-	for b.Loop() {
-		err := fs.WalkDir(fsys, "data_lg", func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+			// walk sub dir
+			got = c.walkFunc(fsys, "html", "layout", "app")
+			if !maps.EqualFunc(expectedSub, got, slices.Equal) {
+				t.Errorf("sub dir expected: %v, got: %v", expectedSub, got)
 			}
-			visited++
-			return nil
 		})
-		if err != nil {
-			b.Fatalf("unexpected error: %v", err)
-		}
-	}
-	if visited == 0 {
-		b.Fatal("no files visited")
-	}
-}
-
-func BenchmarkWalkBreadthFirstLarge(b *testing.B) {
-	fsys := os.DirFS("example")
-	visited := 0
-
-	for b.Loop() {
-		err := walkDirBreadthFirst(fsys, "data_lg", func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			visited++
-			return nil
-		})
-		if err != nil {
-			b.Fatalf("unexpected error: %v", err)
-		}
-	}
-	if visited == 0 {
-		b.Fatal("no files visited")
-	}
-}
-
-func BenchmarkWalkLayoutSmall(b *testing.B) {
-	fsys := os.DirFS("example")
-	countBytes, _ := fs.ReadFile(fsys, "data_sm.txt")
-	count, err := strconv.Atoi(string(countBytes))
-	if err != nil {
-		b.Fatalf("failed to get count: %v", err)
-	}
-
-	for b.Loop() {
-		filesWithLayouts := WalkFilesWithLayout(fsys, "html", "layout", "data_sm")
-		if len(filesWithLayouts) != count {
-			b.Errorf("wrong file length: expected %d got %d ", count, len(filesWithLayouts))
-		}
-	}
-}
-
-func BenchmarkWalkLayoutBreadthFirstSmall(b *testing.B) {
-	fsys := os.DirFS("example")
-	countBytes, _ := fs.ReadFile(fsys, "data_sm.txt")
-	count, err := strconv.Atoi(string(countBytes))
-	if err != nil {
-		b.Fatalf("failed to get count: %v", err)
-	}
-
-	for b.Loop() {
-		filesWithLayouts := WalkFilesWithLayoutBreadthFirst(fsys, "html", "layout", "data_sm")
-		if len(filesWithLayouts) != count {
-			b.Errorf("wrong file length: expected %d got %d ", count, len(filesWithLayouts))
-		}
-	}
-}
-
-func BenchmarkWalkLayoutLarge(b *testing.B) {
-	fsys := os.DirFS("example")
-	countBytes, _ := fs.ReadFile(fsys, "data_lg.txt")
-	count, err := strconv.Atoi(string(countBytes))
-	if err != nil {
-		b.Fatalf("failed to get count: %v", err)
-	}
-
-	for b.Loop() {
-		filesWithLayouts := WalkFilesWithLayout(fsys, "html", "layout", "data_lg")
-		if len(filesWithLayouts) != count {
-			b.Errorf("wrong file length: expected %d got %d ", count, len(filesWithLayouts))
-		}
-	}
-}
-
-func BenchmarkWalkLayoutBreadthFirstLarge(b *testing.B) {
-	fsys := os.DirFS("example")
-	countBytes, _ := fs.ReadFile(fsys, "data_lg.txt")
-	count, err := strconv.Atoi(string(countBytes))
-	if err != nil {
-		b.Fatalf("failed to get count: %v", err)
-	}
-
-	for b.Loop() {
-		filesWithLayouts := WalkFilesWithLayoutBreadthFirst(fsys, "html", "layout", "data_lg")
-		if len(filesWithLayouts) != count {
-			b.Errorf("wrong file length: expected %d got %d ", count, len(filesWithLayouts))
-		}
-	}
-}
-
-func TestWalkDirBreadthFirst(t *testing.T) {
-	memFS := fstest.MapFS{
-		"root/file1.txt":          {Data: []byte("")},
-		"root/dirA/file1.txt":     {Data: []byte("")},
-		"root/dirB/file1.txt":     {Data: []byte("")},
-		"root/dirB/sub/file1.txt": {Data: []byte("")},
-	}
-
-	var visited []string
-	err := walkDirBreadthFirst(memFS, "root", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		visited = append(visited, path)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := []string{
-		"root",
-		"root/dirA",
-		"root/dirB",
-		"root/file1.txt",
-		"root/dirA/file1.txt",
-		"root/dirB/file1.txt",
-		"root/dirB/sub",
-		"root/dirB/sub/file1.txt",
-	}
-	if !slices.Equal(visited, expected) {
-		t.Errorf("expected:\n  %v\ngot\n: %v", expected, visited)
-	}
-}
-
-func TestWalkDirBreadthFirst_SkipAll(t *testing.T) {
-	memFS := fstest.MapFS{
-		"root/file1.txt":      {Data: []byte("")},
-		"root/dirA/file1.txt": {Data: []byte("")},
-	}
-
-	var visited []string
-	err := walkDirBreadthFirst(memFS, "root", func(path string, d fs.DirEntry, err error) error {
-		visited = append(visited, path)
-		return fs.SkipAll
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := []string{
-		"root",
-	}
-	if !slices.Equal(visited, expected) {
-		t.Errorf("expected:\n  %v\ngot\n: %v", expected, visited)
-	}
-}
-
-func TestWalkDirBreadthFirst_SkipDir(t *testing.T) {
-	memFS := fstest.MapFS{
-		"root/file1.txt":          {Data: []byte("")},
-		"root/dirA/file1.txt":     {Data: []byte("")},
-		"root/dirB/afile1.txt":    {Data: []byte("")},
-		"root/dirB/file1.txt":     {Data: []byte("")},
-		"root/dirB/sub/file1.txt": {Data: []byte("")},
-		"root/dirB/zfile1.txt":    {Data: []byte("")},
-	}
-
-	// skipped entire directory
-	var visited []string
-	err := walkDirBreadthFirst(memFS, "root", func(path string, d fs.DirEntry, err error) error {
-		visited = append(visited, path)
-		if path == "root/dirB" {
-			return fs.SkipDir
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := []string{
-		"root",
-		"root/dirA",
-		"root/dirB",
-		"root/file1.txt",
-		"root/dirA/file1.txt",
-	}
-	if !slices.Equal(visited, expected) {
-		t.Errorf("expected:\n  %v\ngot\n: %v", expected, visited)
-	}
-
-	// skipped path appears before some
-	visited = nil
-	err = walkDirBreadthFirst(memFS, "root", func(path string, d fs.DirEntry, err error) error {
-		visited = append(visited, path)
-		if path == "root/dirB/afile1.txt" {
-			return fs.SkipDir
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected = []string{
-		"root",
-		"root/dirA",
-		"root/dirB",
-		"root/file1.txt",
-		"root/dirA/file1.txt",
-		"root/dirB/afile1.txt",
-	}
-	if !slices.Equal(visited, expected) {
-		t.Errorf("expected:\n  %v\ngot\n: %v", expected, visited)
-	}
-
-	// skipped path appears after some
-	visited = nil
-	err = walkDirBreadthFirst(memFS, "root", func(path string, d fs.DirEntry, err error) error {
-		visited = append(visited, path)
-		if path == "root/dirB/zfile1.txt" {
-			return fs.SkipDir
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected = []string{
-		"root",
-		"root/dirA",
-		"root/dirB",
-		"root/file1.txt",
-		"root/dirA/file1.txt",
-		"root/dirB/afile1.txt",
-		"root/dirB/file1.txt",
-		"root/dirB/sub",
-		"root/dirB/zfile1.txt",
-	}
-	if !slices.Equal(visited, expected) {
-		t.Errorf("expected:\n  %v\ngot\n: %v", expected, visited)
 	}
 }
